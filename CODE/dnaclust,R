@@ -1,0 +1,234 @@
+cls<-readLines("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/DNAclust_cls/dnaclust_g4.tsv")
+if (method=="dnaclust"){
+ cls<-as.data.frame(cls)
+cls$id<-seq_along(1:nrow(cls))
+cls.1<-cls %>% 
+    mutate(V2 = strsplit(as.character(cls), "\t")) %>% 
+    unnest(V2)%>%as.data.frame()
+##size of clusters with duplicated sequences
+cls.1%>% group_by(id)%>% summarise(n=n())%>% arrange(desc(n))%>% head()
+
+ cls.2<-  cls.1%>% mutate(name = ifelse(grepl("|",V2),strsplit(as.character(V2), "\\|"),V2)) %>% unnest()%>%
+    as.data.frame()
+cls.2$cls<-NULL
+cls.2$V2<-NULL
+
+
+cls.2<-separate(cls.2,"name",into=c("chr","ramge"),sep=":",remove=FALSE)
+chr<-paste0("chr",c(1:22,"X","Y"))
+cls.2<-cls.2[cls.2$chr %in% chr,]
+cls_summary<-cls.2%>% group_by(id)%>% summarise(n=n(),n_dis=n_distinct(id))%>% filter(n>4)%>% arrange(desc(n))
+cls.3<-cls.2[cls.2$id %in% cls_summary$id,]
+
+
+cls.3$ramge<-NULL
+
+}
+
+
+#input fasta file to search sequences if they fall in any families from our list
+output_fwd<-fread("/bio/home/goonerrn/g_quadruplex/annotation_database/query/output_fwd_withCHR_2.txt",header=FALSE)
+
+
+chromosome=paste0("chr",c(1:22,"X","Y"))
+
+output_fwd<-output_fwd[output_fwd$V1 %in% chromosome]
+output_fwd$name<-paste0(output_fwd$V1,":",output_fwd$V2)
+output_fwd<-output_fwd%>%separate(V3,c("nggg","nquad","fquad"),":")
+output_fwd$nggg<-as.numeric(as.character(output_fwd$nggg))
+output_fwd<-as.data.frame(output_fwd)
+
+cls.3<-left_join(cls.3,output_fwd,by=c("name"="name"))
+
+require(IRanges)
+#find nearby sequences and if they are same or different
+cls.3<-separate(cls.3,"V2",into=c("start","end"),sep="-")%>% filter(!(is.na(start) | is.na(end)))
+ir <- IRanges(start=as.numeric(cls.3$start)-250, end=as.numeric(cls.3$end)+250,names=cls.3$name)
+cls.3$groupcoordinates <- subjectHits(findOverlaps(ir, reduce(ir)))
+cls.3%>% group_by(groupcoordinates,V4)%>% summarise(n=n(),n_dis=n_distinct(name)) %>% as.data.frame()%>% arrange(desc(n_dis))%>%head(20) 
+
+cls.4<-cls.3%>% arrange(start)%>%group_by(groupcoordinates,V4)%>% summarise(cls=paste(unique(id),collapse=";"),name=paste(unique(name),collapse=";"),n_dis=n()) %>% as.data.frame()%>% arrange(desc(n_dis))
+cls.5<-cls.4 %>% group_by(V4)%>% summarise(cls=paste(unique(cls),collapse=";"),group_nearby=paste(unique(groupcoordinates),collapse=";"),name=paste(unique(name),collapse=";"),seq_repeats=n()) %>% as.data.frame()%>% arrange(desc(seq_repeats))
+
+#%>%head(20) 
+cls.5$name1<-cls.5$name
+cls.5$name<-paste0("seq_",seq_along(1:nrow(cls.5)))
+cls.5$cluster<-cls.5$cls
+tokeep<-cls.5 %>% group_by(cluster)%>% summarise(n=n())%>% filter(n>4) 
+
+cls.6<-cls.5[cls.5$cluster %in% tokeep$cluster,]
+
+table(cls.5$group_nearby)%>%as.data.frame()%>% arrange(desc(Freq))%>%head(20) 
+cls.6$group_nearby<-NULL
+cls.6$name1<-NULL
+
+cls.6<-cls.6 %>% arrange(cluster)%>%
+ mutate(cluster1= paste0("cluster_",cumsum(!duplicated(cluster)))) 
+
+cls.list<-split(cls.6,cls.6$cluster)
+#cls.6<-cls.5
+
+
+dir.create(file.path("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/g4cdhit/edit6_fasta/"), showWarnings = FALSE,recursive=TRUE)
+dir.create(file.path("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/g4cdhit/edit6_fasta/fasta_g4cdhit/"), showWarnings = FALSE,recursive=TRUE)
+
+path<-file.path("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/g4cdhit/edit6_fasta/fasta_g4cdhit/")
+map(cls.list,~writeFasta1(.x,path))
+
+
+
+
+
+writeFasta1<-function(data,cluster_fasta_Dir){
+  fastaLines = c()
+  for (rowNum in 1:nrow(data)){
+    fastaLines = c(fastaLines, as.character(paste(">", data[rowNum,"name"], sep = "")))
+    fastaLines = c(fastaLines,as.character(data[rowNum,"V4"]))
+  }
+	filename<-paste0(cluster_fasta_Dir,"/",as.character(data[1,"cluster"]),".fasta")
+
+  fileConn<-file(filename)
+  writeLines(fastaLines, fileConn)
+  close(fileConn)
+}
+
+}
+if (method=="cdhit"){
+
+#source("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/codes/cdhit_parser.R")
+clstr <- read.csv("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/cdhit_clusters.tsv.clstr", sep = "\t", row.names = NULL, header = FALSE, stringsAsFactors = FALSE)
+cdhit_result<-meshclust_parse(clstr)
+#cdhit_result_path<-"/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/cdhit_clusters.tsv.clstr"
+#cdhit_result<-parsed_result(cdhit_result_path)
+
+
+
+
+ cls.2<- cdhit_result%>% mutate(sequence = ifelse(grepl("|",sequence),strsplit(as.character(sequence), "\\|"),V2)) %>% unnest()%>%
+    as.data.frame()
+cls.2$cls<-NULL
+cls.2$V2<-NULL
+
+
+cls.2<-separate(cls.2,"sequence",into=c("chr","range"),sep=":",remove=FALSE)
+cls.2$chr<-gsub(" ","", cls.2$chr)
+cls.2$sequence<-gsub(" ","", cls.2$sequence)
+
+chr<-paste0("chr",c(1:22,"X","Y"))
+cls.2$subset<-cls.2$chr %in% chr
+cls.2<-cls.2%>% filter(subset==TRUE)
+cls_summary<-cls.2%>% filter(subset==TRUE)%>%group_by(cluster)%>% summarise(n=n(),n_dis=n_distinct(cluster))%>% filter(n>4)%>% arrange(desc(n))
+cls.3<-cls.2[cls.2$cluster %in% cls_summary$cluster,]
+
+cls.3<-cls.3%>% select(cluster,sequence)
+cls.3$id<-gsub(" ","_",cls.3$cluster)
+cls.3$cluster<-NULL
+cls.3$name<-cls.3$sequence
+cls.3$sequence<-NULL
+
+cls.3%>% group_by(id)%>% summarise(n=n())%>% arrange(desc(n))
+
+cls.3<-left_join(cls.3,output_fwd,by=c("name"="name"))
+clslist<-split(cls.3,cls.3$id)
+
+
+
+
+
+}
+
+
+library(knitr)
+library(tidyr)
+library(stringr)
+library(dplyr)
+library(data.table)
+meshclust_parse<-function(clstr){
+clstr2 <- clstr
+n = nrow(clstr)
+x = 0
+numbers_only <- function(x) !grepl("\\D", x)
+for (row in c(1:n)) {
+  if (numbers_only(clstr2[row,1]) == TRUE) {
+    clstr2[row,1] <- x}
+  else {NULL}
+  x <- clstr2[row,1]
+}
+#kable(head(clstr2))
+#library(knitr)
+clstr.sums <- data.frame(dplyr::count(clstr2,V1))
+#kable(head(clstr.sums))
+
+clstr_m3<- clstr.sums[(clstr.sums[,2]>4),]
+#Yes, the switch properly took place. Now we need to get rid of rows that have empty V2
+switch <- clstr.sums[1,2]
+clstr3 <- cbind(clstr2[1], clstr)
+#kable(clstr3[c((switch-2):(switch+2)),])
+
+clstr4 <- clstr2[-which(clstr2$V2 == ""), ]
+#kable(clstr4[c(1:5,(switch-2):(switch+2)),])
+
+clstr5 <- clstr4
+clstr5[] <- lapply(clstr5, gsub, pattern='>', replacement='')
+clstr5.2 <- data.frame(str_split_fixed(clstr5$V2, "nt,", 2))
+clstr5.3 <- data.frame(str_split_fixed(clstr5.2$X2, "... ", 2))
+clstr6 <- cbind(clstr5[1],clstr5.2[1],clstr5.3[1:2])
+colnames(clstr6) <- c("cluster","nt","sequence","stat")
+clstr<-data.table(clstr6)
+clstr_1<-setDT(clstr)[, if (.N > 4) .SD, by = cluster]
+return(clstr_1)
+}
+
+
+clstr <- read.csv("/bio/home/goonerrn/g_quadruplex/annotation_database/G_quad_clustering/starcode/Meshclust_clusters.tsv", sep = "\t", row.names = NULL, header = FALSE, stringsAsFactors = FALSE)
+meshclust_result_path<-meshclust_parse(clstr)
+
+
+ cls.2<- meshclust_result_path%>% mutate(sequence = ifelse(grepl("|",sequence),strsplit(as.character(sequence), "\\|"),V2)) %>% unnest()%>%
+    as.data.frame()
+cls.2$cls<-NULL
+cls.2$V2<-NULL
+
+
+cls.2<-separate(cls.2,"sequence",into=c("chr","range"),sep=":",remove=FALSE)
+cls.2$chr<-gsub(" ","", cls.2$chr)
+cls.2$sequence<-gsub(" ","", cls.2$sequence)
+
+chr<-paste0("chr",c(1:22,"X","Y"))
+cls.2$subset<-cls.2$chr %in% chr
+cls.2<-cls.2%>% filter(subset==TRUE)
+cls_summary<-cls.2%>% filter(subset==TRUE)%>%group_by(cluster)%>% summarise(n=n(),n_dis=n_distinct(cluster))%>% filter(n>4)%>% arrange(desc(n))
+cls.3<-cls.2[cls.2$cluster %in% cls_summary$cluster,]
+
+cls.3<-cls.3%>% select(cluster,sequence)
+cls.3$id<-gsub(" ","_",cls.3$cluster)
+cls.3$cluster<-NULL
+cls.3$name<-cls.3$sequence
+cls.3$sequence<-NULL
+
+cls.3%>% group_by(id)%>% summarise(n=n())%>% arrange(desc(n))
+
+cls.3<-left_join(cls.3,output_fwd,by=c("name"="name"))
+clslist<-split(cls.3,cls.3$id)
+
+function(df){
+if (nrow(df)>500){
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
